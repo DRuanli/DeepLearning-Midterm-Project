@@ -48,10 +48,20 @@ class SentimentDataset(Dataset):
         }
 
 
-def preprocess_text(text):
-    """Preprocess text: lowercase, remove punctuation."""
+def preprocess_text(text, remove_stopwords=False):
+    """
+    Simple preprocessing: lowercase, remove punctuation.
+    No NLTK dependency to avoid installation issues.
+    """
+    # Convert to lowercase
     text = text.lower()
-    text = re.sub(r'[^\w\s]', '', text)
+
+    # Remove punctuation and replace with space
+    text = re.sub(r'[^\w\s]', ' ', text)
+
+    # Remove extra whitespace
+    text = re.sub(r'\s+', ' ', text).strip()
+
     return text
 
 
@@ -70,14 +80,15 @@ def build_vocabulary(texts, contexts, max_vocab_size=5000):
     most_common = word_counts.most_common(max_vocab_size - 3)  # Reserve space for <PAD>, <UNK>, etc.
 
     # Create word to index mapping
-    word_to_idx = {'<PAD>': 0, '<UNK>': 1}
+    word_to_idx = {'<PAD>': 0, '<UNK>': 1, '<BOS>': 2}  # Add beginning of sentence token
     for word, _ in most_common:
         word_to_idx[word] = len(word_to_idx)
 
     return word_to_idx
 
 
-def load_data(csv_path, max_vocab_size=5000, batch_size=32, test_size=0.2, random_state=42):
+def load_data(csv_path, max_vocab_size=5000, batch_size=32, test_size=0.2,
+              remove_stopwords=False, random_state=42):
     """Load data from CSV, preprocess, and create DataLoaders."""
     df = pd.read_csv(csv_path)
 
@@ -90,7 +101,7 @@ def load_data(csv_path, max_vocab_size=5000, batch_size=32, test_size=0.2, rando
         label_map = {'Positive': 0, 'Negative': 1, 'Neutral': 2}
         df['label'] = df['label'].map(label_map)
 
-    # Preprocess texts and contexts
+    # Preprocess texts and contexts - ignoring remove_stopwords option to avoid NLTK dependency
     df['text'] = df['text'].apply(preprocess_text)
     df['context'] = df['context'].apply(preprocess_text)
 
@@ -98,7 +109,12 @@ def load_data(csv_path, max_vocab_size=5000, batch_size=32, test_size=0.2, rando
     df = df.dropna()
 
     # Split into train and test sets
-    train_df, test_df = train_test_split(df, test_size=test_size, random_state=random_state, stratify=df['label'])
+    train_df, test_df = train_test_split(
+        df,
+        test_size=test_size,
+        random_state=random_state,
+        stratify=df['label']
+    )
 
     # Build vocabulary from training data only
     word_to_idx = build_vocabulary(train_df['text'], train_df['context'], max_vocab_size)
@@ -126,9 +142,20 @@ def load_data(csv_path, max_vocab_size=5000, batch_size=32, test_size=0.2, rando
     )
     class_weights = torch.tensor(class_weights, dtype=torch.float)
 
-    # Create DataLoaders
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    # Create DataLoaders with safer options for various environments
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=0  # Avoid multiprocessing issues
+    )
+
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=0  # Avoid multiprocessing issues
+    )
 
     return train_loader, test_loader, word_to_idx, class_weights
 
